@@ -1,0 +1,389 @@
+---
+title: "COMP1013 Project T3 2025"
+author: "Thien Nhan Pham - 22097306"
+date: "2026-01-21"
+output: pdf_document
+---
+#Declaration
+
+By including this statement, we the authors of this work, verify that:
+
+• We hold a copy of this assignment that we can produce if the original is lost or damaged.
+
+• We hereby certify that no part of this assignment/product has been copied from any other student’s work or from any other source except where due acknowledgement is made in the assignment.
+
+• No part of this assignment/product has been written/produced for us by another person except where such collaboration has been authorised by the subject lecturer/tutor concerned.
+
+• We are aware that this work may be reproduced and submitted to plagiarism detection software programs for the purpose of detecting possible plagiarism (which may retain a copy on its database for future plagiarism checking).
+
+• We hereby certify that we have read and understand what the School of Computing, Engineering and Mathematics defines as minor and substantial breaches of misconduct as outlined in the learning guide for this unit.
+
+
+```{r setup, include=FALSE}
+#   - Set global options for code chunks
+#   - Load packages
+#   - Define helper functions used later
+# echo = TRUE     -> show code in the PDF (important for assessment transparency)
+# message = FALSE -> hide package startup messages (keeps report clean)
+# warning = FALSE -> hide warnings (keeps report clean; warnings can be discussed if needed)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+
+# tidyverse: provides dplyr (data wrangling) + ggplot2 (plots)
+# lubridate: easier date handling (we mainly rely on as.Date but lubridate is common)
+# knitr + kableExtra: produce readable tables in the PDF
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+
+# Helper for nice tables
+# Instead of repeating kable() styling everywhere, we make a small function.
+nice_table <- function(df, caption = NULL) {
+  kable(df, caption = caption, digits = 2) %>%
+    kable_styling(full_width = FALSE)
+}
+```
+```{r load-data}
+# sales_ug.csv: main dataset (store, product, day level)
+# product_hierarchy.csv: product_id -> hierarchy categories
+# store_cities.csv: store metadata (type, size, city)
+sales <- read.csv("sales_ug.csv")
+product_hierarchy <- read.csv("product_hierarchy.csv")
+store_cities <- read.csv("store_cities.csv")
+
+# Convert date column into Date type (important for correct plotting and grouping)
+sales$date <- as.Date(sales$date)
+
+# str() shows column names + data types + a preview of values
+str(sales)
+str(product_hierarchy)
+str(store_cities)
+
+#   - Missing values can break calculations or bias averages
+#   - We need to know if key columns have NA before analysis
+# colSums(is.na()) counts how many NA values are in each column.nice_table(as.data.frame(colSums(is.na(sales))), "Missing values in sales")
+nice_table(data.frame(missing = colSums(is.na(product_hierarchy))),"Missing values in product hierarchy")
+nice_table(as.data.frame(colSums(is.na(store_cities))), "Missing values in store cities")
+
+```
+# =====================================================
+
+# TASK 1: Store revenue across days
+
+# =====================================================
+The sales dataset records revenue at the (store, product, day) level. To compute total revenue per store at the end of each day, revenue is summed across all products for each store and date. To compare differences between days, daily totals are summed across stores. Weekly totals are obtained by summing store daily revenue across the full seven-day period, then visualised.
+
+```{r q1}
+# group_by(store_id, date) -> group rows by store and day
+# summarise(sum(revenue))  -> total revenue per store per day
+# sales is at (store, product, date) level.
+# That means each row is ONE product sold at ONE store on ONE day.
+# To get daily store revenue, we must sum revenue across all products per store per day.
+store_daily_revenue <- sales %>%
+group_by(store_id, date) %>%
+summarise(total_revenue = sum(revenue, na.rm = TRUE), .groups = "drop") %>%
+arrange(store_id, date)
+# Show first rows for checking
+nice_table(head(store_daily_revenue, 10), "First 10 rows: daily total revenue per store")
+# After grouping by store_id + date, there should be exactly ONE row per store-date.
+stopifnot(nrow(store_daily_revenue) == nrow(distinct(sales, store_id, date)))
+# Total revenue should not contain NA after summing with na.rm=TRUE
+stopifnot(!any(is.na(store_daily_revenue$total_revenue)))
+
+# Warn if any totals are negative (could indicate refunds/returns or data issues)
+if (any(store_daily_revenue$total_revenue < 0, na.rm = TRUE)) {
+warning("Some store_daily_revenue totals are negative — check source data.")
+}
+# Now we sum across stores to get ONE total for each day.
+daily_total_revenue <- store_daily_revenue %>%
+group_by(date) %>%
+summarise(total_revenue_all_stores = sum(total_revenue), .groups = "drop") %>%
+arrange(date)
+
+nice_table(daily_total_revenue, "Total revenue across all stores by day")
+
+
+#The line connects the days to show the pattern/trend over time.
+#The points show the exact daily values.
+ggplot(daily_total_revenue, aes(x = date, y = total_revenue_all_stores)) +
+geom_line() +
+geom_point() +
+labs(
+title = "Total Revenue Across All Stores by Day",
+x = "Date",
+y = "Total Revenue"
+)
+
+# To compare stores across the whole week:
+#   - sum each store's daily total revenue across all days.
+store_weekly_revenue <- store_daily_revenue %>%
+group_by(store_id) %>%
+summarise(total_revenue_7days = sum(total_revenue), .groups = "drop") %>%
+arrange(desc(total_revenue_7days))
+
+nice_table(store_weekly_revenue, "Total revenue per store over 7 days")
+
+# Plot weekly revenue per store
+ggplot(store_weekly_revenue, aes(x = reorder(store_id, total_revenue_7days), y = total_revenue_7days)) +
+geom_col() +
+coord_flip() +
+labs(
+title = "Total Revenue per Store Over 7 Days",
+x = "Store",
+y = "Total Revenue (7 days)"
+)
+```
+best_day <- daily_total_revenue %>% slice_max(total_revenue_all_stores, n = 1, with_ties = FALSE)
+worst_day <- daily_total_revenue %>% slice_min(total_revenue_all_stores, n = 1, with_ties = FALSE)
+top_store <- store_weekly_revenue %>% slice_max(total_revenue_7days, n = 1, with_ties = FALSE)
+
+```{r task1-inline, include=FALSE}
+# This chunk is hidden in the PDF but runs in the background
+# It creates variables used in inline text below
+best_day <- daily_total_revenue %>% slice_max(total_revenue_all_stores, n = 1, with_ties = FALSE)
+worst_day <- daily_total_revenue %>% slice_min(total_revenue_all_stores, n = 1, with_ties = FALSE)
+top_store <- store_weekly_revenue %>% slice_max(total_revenue_7days, n = 1, with_ties = FALSE)
+```
+The highest total revenue day was **`r best_day$date`** with **`r round(best_day$total_revenue_all_stores, 2)`** revenue.  
+The lowest total revenue day was **`r worst_day$date`** with **`r round(worst_day$total_revenue_all_stores, 2)`** revenue.  
+The top store over 7 days was **`r top_store$store_id`** with **`r round(top_store$total_revenue_7days, 2)`** revenue.  
+
+
+# =====================================================
+
+# TASK 2: Most popular product type (Hierarchy 1)
+
+# =====================================================
+
+“Most popular” is measured using total sales quantity. Sales is joined with product hierarchy, then aggregated by hierarchy1_id. The ranked table includes number of hierarchy2 subtypes, product count, total quantity sold, and revenue.
+
+```{r q2}
+# left_join keeps all sales rows and adds hierarchy columns using product_id
+sales_with_hierarchy <- sales %>%
+left_join(product_hierarchy, by = "product_id")
+
+# Validation: join should not change the number of sales rows
+stopifnot(nrow(sales_with_hierarchy) == nrow(sales))
+
+product_type_ranked <- sales_with_hierarchy %>%
+group_by(hierarchy1_id) %>%
+summarise(
+subtypes_h2 = n_distinct(hierarchy2_id),
+products = n_distinct(product_id),
+sales_qty = sum(sales, na.rm = TRUE),
+revenue = sum(revenue, na.rm = TRUE),
+.groups = "drop"
+) %>%
+arrange(desc(sales_qty))
+
+nice_table(product_type_ranked, "Product types ranked by total sales quantity")
+
+top1 <- product_type_ranked %>% slice(1)
+top2 <- product_type_ranked %>% slice(2)
+
+# Plot ranked product types
+ggplot(product_type_ranked, aes(x = reorder(hierarchy1_id, sales_qty), y = sales_qty)) +
+geom_col() +
+coord_flip() +
+labs(
+title = "Product Types (Hierarchy 1) Ranked by Sales Quantity",
+x = "Product Type (Hierarchy 1)",
+y = "Total Sales Quantity (Units)"
+)
+#“This quickly shows which product category is most popular by units sold.”
+#“The product type with the largest bar is the most popular because it sold the most units.”
+
+#“This is volume popularity, not revenue popularity.”
+```
+
+Most popular hierarchy1 is **`r top1$hierarchy1_id`** (sales quantity **`r top1$sales_qty`**, revenue **`r round(top1$revenue, 2)`**).  
+Second most popular is **`r top2$hierarchy1_id`** (sales quantity **`r top2$sales_qty`**, revenue **`r round(top2$revenue, 2)`**).  
+
+
+# =====================================================
+
+# TASK 3: Store types and store size vs revenue
+
+# =====================================================
+
+Store metadata is joined to sales. The two most common store types are identified by number of stores. Weekly sales volume and revenue are compared. Store size vs revenue is tested using correlation and visualised using a scatter plot.
+
+```{r q3}
+
+sales_with_store <- sales %>%
+left_join(store_cities, by = "store_id")
+
+# Validation: join should not change number of sales rows
+stopifnot(nrow(sales_with_store) == nrow(sales))
+
+storetype_counts <- store_cities %>%
+group_by(storetype_id) %>%
+summarise(num_stores = n_distinct(store_id), .groups = "drop") %>%
+arrange(desc(num_stores))
+
+nice_table(storetype_counts, "Store type counts (by number of stores)")
+
+# Top 2 store types
+top_two_storetypes <- storetype_counts %>% slice(1:2) %>% pull(storetype_id)
+
+storetype_weekly <- sales_with_store %>%
+filter(storetype_id %in% top_two_storetypes) %>%
+group_by(storetype_id) %>%
+summarise(
+total_sales_qty = sum(sales, na.rm = TRUE),
+total_revenue = sum(revenue, na.rm = TRUE),
+num_stores = n_distinct(store_id),
+.groups = "drop"
+) %>%
+arrange(desc(total_sales_qty))
+
+nice_table(storetype_weekly, "Sales and revenue for the two most common store types")
+
+# Plot total sales quantity
+#“Choosing the two most common store types gives a fairer comparison because both have enough stores and data.”
+#If one bar is higher: that store type has higher total sales volume.
+ggplot(storetype_weekly, aes(x = storetype_id, y = total_sales_qty)) +
+geom_col() +
+labs(
+title = "Total Sales Quantity: Two Most Common Store Types",
+x = "Store Type",
+y = "Total Sales Quantity"
+)
+
+# Plot total revenue
+#“This reveals which store type generates more income overall.”
+ggplot(storetype_weekly, aes(x = storetype_id, y = total_revenue)) +
+geom_col() +
+labs(
+title = "Total Revenue: Two Most Common Store Types",
+x = "Store Type",
+y = "Total Revenue"
+)
+
+# We want one row per store, so we group by store_id and store_size,
+# then sum revenue across the week.
+store_weekly_perf <- sales_with_store %>%
+group_by(store_id, storetype_id, store_size) %>%
+summarise(total_revenue_7days = sum(revenue, na.rm = TRUE), .groups = "drop")
+
+# Correlation measures strength of linear relationship
+cor_value <- cor(store_weekly_perf$store_size, store_weekly_perf$total_revenue_7days, use = "complete.obs")
+
+# Scatter plot with regression line
+#If the line slopes upward: larger stores tend to make more revenue.
+#If points are close to the line: relationship is strong.
+#If points are widely scattered: relationship is weak.
+ggplot(store_weekly_perf, aes(x = store_size, y = total_revenue_7days)) +
+geom_point() +
+geom_smooth(method = "lm", se = FALSE) +
+labs(
+title = "Store Size vs 7-Day Total Revenue",
+x = "Store Size",
+y = "Total Revenue (7 days)"
+)
+#“The correlation value supports this visual relationship, showing whether size and revenue are strongly related.”
+```
+The correlation between store size and 7-day revenue is **`r round(cor_value, 3)`**.
+
+# =====================================================
+
+# TASK 4: Promotion levels and effectiveness
+
+# =====================================================
+
+Promotion types and levels are listed first. Promotion effectiveness is assessed by comparing average sales when promotions are applied versus not applied, then examining sales patterns across promotion bins and discount rates.
+
+```{r q4-plot1, echo=FALSE}
+promo1_levels <- sales %>%
+distinct(promo_type_1, promo_bin_1) %>%
+arrange(promo_type_1, promo_bin_1)
+
+nice_table(promo1_levels, "Promotion type 1 levels used")
+
+promo2_levels <- sales %>%
+distinct(promo_discount_type_2, promo_discount_2) %>%
+arrange(promo_discount_type_2, promo_discount_2)
+
+nice_table(promo2_levels, "Promotion discount 2 levels used")
+
+# TRUE if promo_type_1 exists and is not blank, otherwise FALSE
+sales_promo_flag <- sales %>%
+mutate(has_promo1 = !is.na(promo_type_1) & promo_type_1 != "")
+
+# Compare average sales and revenue for promo vs no promo
+promo_effect_summary <- sales_promo_flag %>%
+group_by(has_promo1) %>%
+summarise(
+avg_sales = mean(sales, na.rm = TRUE),
+avg_revenue = mean(revenue, na.rm = TRUE),
+n = n(),
+.groups = "drop"
+)
+
+nice_table(promo_effect_summary, "Average sales/revenue: promo type 1 vs no promo")
+
+# Plot average sales promo vs no promo
+ggplot(promo_effect_summary, aes(x = as.factor(has_promo1), y = avg_sales)) +
+geom_col() +
+labs(
+title = "Average Sales: Promo Type 1 vs No Promo",
+x = "Promo Type 1 Applied (TRUE/FALSE)",
+y = "Average Sales Quantity"
+)
+
+bin_effect <- sales_promo_flag %>%
+filter(!is.na(promo_bin_1)) %>%
+group_by(promo_type_1, promo_bin_1) %>%
+summarise(
+avg_sales = mean(sales, na.rm = TRUE),
+avg_revenue = mean(revenue, na.rm = TRUE),
+n = n(),
+.groups = "drop"
+) %>%
+arrange(promo_type_1, promo_bin_1)
+
+nice_table(bin_effect, "Average sales by promo type and promo level bin")
+
+# Plot average sales by promo bin
+ggplot(bin_effect, aes(x = promo_bin_1, y = avg_sales, group = promo_type_1)) +
+geom_line() +
+geom_point() +
+labs(
+title = "Average Sales by Promotion Level (Promo Bin 1)",
+x = "Promotion Level Bin",
+y = "Average Sales Quantity"
+)
+
+# Convert discount values to numeric (sometimes they load as factor/character)
+sales <- sales %>%
+  mutate(promo_discount_2_num = as.numeric(as.character(promo_discount_2)))
+
+discount_effect <- sales %>%
+  filter(!is.na(promo_discount_2_num), promo_discount_2_num > 0) %>%
+  group_by(promo_discount_type_2, promo_discount_2_num) %>%
+  summarise(
+    avg_sales = mean(sales, na.rm = TRUE),
+    avg_revenue = mean(revenue, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(promo_discount_type_2, promo_discount_2_num)
+
+nice_table(discount_effect, "Average sales by discount type and discount rate")
+
+# Defensive coding: only plot if there is any discount data
+if (nrow(discount_effect) == 0) {
+  cat("No non-zero Promo Discount 2 values were used during the week, so a discount-rate effectiveness plot is not applicable.\n")
+} else {
+  ggplot(discount_effect, aes(x = promo_discount_2_num, y = avg_sales)) +
+    geom_point() +
+    labs(
+      title = "Average Sales vs Discount Rate (Promo Discount 2)",
+      x = "Discount Rate",
+      y = "Average Sales"
+    )
+}
+
+
+```
+
